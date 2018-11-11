@@ -38,7 +38,7 @@ let getVideoStatByUrl = async (_url) => {
     }
     return new Promise((resolve, reject) => {
         request({
-            uri: `https://www.googleapis.com/youtube/v3/videos?part=statistics&key=${API_TOKEN}&id=${videoId}`,
+            uri: `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&key=${API_TOKEN}&id=${videoId}`,
             method: 'GET',
         }, (error, response, body) => {
             if (!error && response.statusCode == 200) {
@@ -51,7 +51,9 @@ let getVideoStatByUrl = async (_url) => {
                 resolve({
                     likes: body.items[0].statistics.likeCount,
                     dislikes: body.items[0].statistics.dislikeCount,
-                    views: body.items[0].statistics.viewCount
+                    views: body.items[0].statistics.viewCount,
+                    picurl: body.items[0].snippet.thumbnails.high.url,
+                    name: body.items[0].snippet.title
                 });
             }
             else {
@@ -127,11 +129,13 @@ App.post(`/content`, async (req, res) => {
             && content.url
             && content.blogger_id) {
 
-            let views, likes, dislikes;
+            let views, likes, dislikes, name, picurl;
 
             if (content.likes === undefined
                 || content.dislikes === undefined
-                || content.views === undefined) {
+                || content.views === undefined
+                || content.picurl === undefined
+                || content.name === undefined) {
 
                 let stats;
                 try {
@@ -141,25 +145,31 @@ App.post(`/content`, async (req, res) => {
                     stats = {
                         views: 0,
                         likes: 0,
-                        dislikes: 0
+                        dislikes: 0,
+                        name: '',
+                        picurl: ''
                     }
                 }
                 views = stats.views;
                 likes = stats.likes;
                 dislikes = stats.dislikes;
+                name = stats.name;
+                picurl = stats.picurl;
             }
             else {
                 views = content.views;
                 likes = content.likes;
                 dislikes = content.dislikes;
+                name = content.name;
+                picurl = content.picurl;
             }
 
-            content.name = content.name || '';
-            content.picurl = content.picurl || '';
+            //content.name = content.name || '';
+            //content.picurl = content.picurl || '';
 
             let contentId = await db.one(
                 `INSERT INTO content(type, url, blogger_id, views, likes, dislikes, name, picurl) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-                [content.type, content.url, parseInt(content.blogger_id), parseInt(views), parseInt(likes), parseInt(dislikes), content.name, content.picurl]
+                [content.type, content.url, parseInt(content.blogger_id), parseInt(views), parseInt(likes), parseInt(dislikes), name, picurl]
             );
 
             res.statusCode = 201;
