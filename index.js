@@ -62,6 +62,11 @@ let getVideoStatByUrl = async (_url) => {
 }
 
 
+// ==========
+// BLOGGERS
+// ==========
+
+
 App.post(`/blogger`, async (req, res) => {
 
     try {
@@ -101,6 +106,11 @@ App.post(`/blogger`, async (req, res) => {
     }
 
 });
+
+// ==========
+// CONTENT
+// ==========
+
 
 App.post(`/content`, async (req, res) => {
 
@@ -171,6 +181,10 @@ App.post(`/content`, async (req, res) => {
 
 });
 
+
+// ==========
+// LINKS
+// ==========
 
 
 App.post(`/links`, async (req, res) => {
@@ -347,6 +361,11 @@ App.post(`/links/batch`, async (req, res) => {
 
 
 
+// ==========
+// CLICK
+// ==========
+
+
 App.post(`/click`, async (req, res) => {
 
     try {
@@ -387,6 +406,67 @@ App.post(`/click`, async (req, res) => {
 
 
 
+App.post(`/click/batch`, async (req, res) => {
+
+    try {
+        let clicks = req.body;
+
+        let contentType = req.headers['content-type'];
+        if (!contentType || contentType.indexOf('application/json')) {
+            res.statusCode = 400;
+            return res.send('Invalid content type');
+        }
+
+        if (Array.isArray(clicks) !== true) {
+            res.statusCode = 400;
+            return res.send('Invalid content type. Require: array of objects');
+        }
+
+        let error = '';
+        let response = [];
+        for (let i in clicks) {
+
+            let click = clicks[i];
+
+            if (click.link_id
+                && click.time) {
+
+                let clickId = await db.one(
+                    `INSERT INTO clicks(link_id, time) VALUES($1, $2) RETURNING id`,
+                    [parseInt(click.link_id), parseInt(click.time)]
+                );
+
+                response.push({
+                    id: clickId.id,
+                    click
+                });
+            }
+            else {
+                error += `Link number: ${i};Invalid params; Required: [link_id, time]`
+            }
+        }
+
+        if (error.length === 0) {
+            res.statusCode = 201;
+            res.json(response);
+        }
+        else {
+            res.statusCode = 400;
+            res.send(error);
+        }1
+    }
+    catch (e) {
+        console.log(`[/click/batch]: ${e.name}\n${e.message}\n${e.stack}`);
+        res.statusCode = 400;
+        res.send(`Error: ${e.name}\n${e.message}\n${e.stack}`);
+    }
+
+});
+
+
+
+
+
 // REDIRECTOR
 App.get(`/:linkId([a-zA-Z]{16})`, async (req, res) => {
 
@@ -413,8 +493,7 @@ App.get(`/:linkId([a-zA-Z]{16})`, async (req, res) => {
             }
         }
         else {
-            res.statusCode = 400;
-            res.send('Invalid format of link');
+            throw new Error('Invalid format of link');
         }
     }
     catch (e) {
@@ -426,6 +505,18 @@ App.get(`/:linkId([a-zA-Z]{16})`, async (req, res) => {
 // REDIRECTOR
 
 
+
+
+
+
+
+
+
+// !!!!!!!!!!!!!!!!!!!
+///
+///  GETTERS
+////
+///// !!!!!!!!!!!!!!!!!!!!!
 
 
 App.get(`/blogger/:bloggerId/content`, async (req, res) =>{
@@ -513,6 +604,114 @@ App.get(`/blogger/:bloggerId/content`, async (req, res) =>{
 
 
 
+
+App.get(`/blogger/:bloggerId/links/sponsor/:sponsorId`, async (req, res) =>{
+
+    try {
+        let blodggerId = parseInt(req.params.bloggerId);
+        let sponsorId = parseInt(req.params.sponsorId);
+
+        let bloggerContentTopN = req.query.top || 20;
+        bloggerContentTopN = parseInt(bloggerContentTopN);
+
+        let blogger = await db.query(
+            `SELECT * FROM bloggers WHERE id = $1`,
+            [blodggerId]
+        );
+
+        let sponsor = await db.query(
+            `SELECT * FROM sponsor WHERE id = $1`,
+            [sponsorId]
+        );
+
+        if (blogger.length === 1 && sponsor.length === 1) {
+
+            let response = {
+                id: blodggerId,
+                name: blogger[0].name,
+                channel_link: blogger[0].channel_link,
+                channel_pic_url: blogger[0].channel_pic_url,
+                subscribers: blogger[0].subscribers
+            };
+
+            let bloggerContent = await db.query(
+                `SELECT content.*, SUM(links.clicks) AS total_clicks FROM content, links WHERE content.blogger_id = $1 AND content.id = links.content_id GROUP by content.id ORDER BY total_clicks DESC LIMIT ${bloggerContentTopN}`,
+                [blodggerId]
+            );
+
+            let content = [];
+            let sponsorTotalClicks = 0;
+            let totalClicks = 0;
+            for (let i in bloggerContent) {
+                let contentId = bloggerContent[i].id;
+
+                let bloggerLinks = await db.query(
+                    `SELECT * FROM links WHERE blogger_id = $1 AND content_id = $2 ORDER BY clicks DESC`,
+                    [blodggerId, contentId]
+                );
+                // console.log(blodggerId, ' ', contentId, ' ', sponsorId );
+
+                let links = [];
+                let clicksSum = 0;
+                let sponsorClicksSum = 0;
+                for (let j in bloggerLinks) {
+                    let linkId = bloggerLinks[j].id;
+                    if (bloggerLinks[j].sponsor_id === sponsorId) {
+                        sponsorClicksSum  += parseInt(bloggerLinks[j].clicks);
+                    }
+                    clicksSum += parseInt(bloggerLinks[j].clicks);
+                    links.push({
+                        id: linkId,
+                        short: bloggerLinks[j].short,
+                        long: bloggerLinks[j].long,
+                        clicks: bloggerLinks[j].clicks,
+                        description: bloggerLinks[j].description,
+                        isCurrentSponsor: (bloggerLinks[j].sponsor_id === sponsorId)
+                    });
+                }
+
+                content.push({
+                    id: contentId,
+                    type: bloggerContent[i].type,
+                    url: bloggerContent[i].url,
+                    picurl: bloggerContent[i].picurl,
+                    name: bloggerContent[i].name,
+                    views: bloggerContent[i].views,
+                    likes: bloggerContent[i].likes,
+                    dislikes: bloggerContent[i].dislikes,
+                    links_count: links.length,
+                    sponsor_clicks_sum: sponsorClicksSum,
+                    clicks_sum: clicksSum,
+                    links: links
+                });
+                totalClicks += clicksSum;
+                sponsorTotalClicks += sponsorClicksSum;
+            }
+
+            response.total_clicks = totalClicks ;
+            response.sponsor_total_clicks = sponsorTotalClicks ;
+            response.content = content;
+
+            res.statusCode = 200;
+            res.json(response);
+        }
+        else {
+            res.statusCode = 404;
+            res.send(`Blogger and sponsor not founded`);
+        }
+    }
+    catch (e) {
+        console.log(`[/blogger/:bloggerId/links/sponsor/:sponsorId]: ${e.name}\n${e.message}\n${e.stack}`);
+        res.statusCode = 400;
+        res.send(`Error: ${e.name}\n${e.message}\n${e.stack}`);
+    }
+});
+
+
+
+
+
+
 App.get(`/content/:contentId`, async (req, res) =>{
     try {
         let contentId = parseInt(req.params.contentId);
@@ -595,9 +794,24 @@ App.get(`/sponsor/:sponsorId/top`, async (req, res) =>{
             };
 
             let sponsorLinks = await db.query(
-                `SELECT bloggers.*, SUM(links.clicks) AS clicks FROM links, bloggers WHERE links.long_domain = $1 AND links.blogger_id = bloggers.id  GROUP BY bloggers.id ORDER BY clicks DESC`,
+                `SELECT bloggers.*, SUM(links.clicks) AS sponsor_clicks, COUNT(links.id) AS sponsor_links FROM links, bloggers WHERE links.long_domain = $1 AND links.blogger_id = bloggers.id GROUP BY bloggers.id ORDER BY sponsor_clicks DESC`,
                 [sponsorDomain]
             );
+
+            let _links = await db.query(
+                `SELECT bloggers.id, SUM(links.clicks) AS total_clicks, COUNT(links.id) AS total_links FROM links, bloggers WHERE links.blogger_id = bloggers.id GROUP BY bloggers.id`,
+                [sponsorDomain]
+            );
+
+            let links = {};
+            for (let i in _links) {
+                links[_links[i].id] = {
+                    total_clicks: parseInt(_links[i].total_clicks),
+                    total_links: parseInt(_links[i].total_links)
+                }
+            }
+            //console.log(_links);
+
 
             let bloggers = [];
             for (let i in sponsorLinks) {
@@ -607,7 +821,10 @@ App.get(`/sponsor/:sponsorId/top`, async (req, res) =>{
                     channel_link: sponsorLinks[i].channel_link,
                     channel_pic_url: sponsorLinks[i].channel_pic_url,
                     subscribers: parseInt(sponsorLinks[i].subscribers),
-                    total_clicks: parseInt(sponsorLinks[i].clicks)
+                    total_links: links[sponsorLinks[i].id].total_links,
+                    sponsor_links: parseInt(sponsorLinks[i].sponsor_links),
+                    total_clicks: links[sponsorLinks[i].id].total_clicks,
+                    sponsor_clicks: parseInt(sponsorLinks[i].sponsor_clicks)
                 });
             }
             response.bloggers  = bloggers;
@@ -629,8 +846,6 @@ App.get(`/sponsor/:sponsorId/top`, async (req, res) =>{
 
 
 
-//let _url = 'https://www.banggood.com/FrSky-ACCST-Taranis-Q-X7-Transmitter-2_4G-16CH-White-Black-International-Version-p-1196246.html?utm_source=Youtube&utm_medium=cussku&utm_campaign=436908_1205053&utm_content=10344&p=6Q0405436908201402OK';
-//console.log(`${parseDomain(url.parse(_url).host).domain}.${parseDomain(url.parse(_url).host).tld}`);
 
 App.listen(8080, () => {
     console.log('Server running...');
